@@ -1,0 +1,27 @@
+# To get a list of every possible question that could be asked during an
+# install:
+#   debconf-get-selections --installer > file
+#   debconf-get-selections >> file
+#
+# /var/log/installer/cdebconf/questions.dat
+#
+
+
+d-i mirror/country string enter information manually
+d-i mirror/http/hostname string http://ftp.ports.debian.org
+d-i mirror/http/directory string /debian-ports/
+d-i mirror/http/proxy string
+
+#d-i base-installer/excludes string powerpc-ibm-utils powerpc-utils
+
+d-i base-installer/includes string debian-ports-archive-keyring
+d-i base-installer/excludes string powerpc-utils
+
+d-i base-installer/include string debian-ports-archive-keyring
+d-i base-installer/exclude string powerpc-utils
+
+d-i debian-installer/includes string debian-ports-archive-keyring
+d-i debian-installer/excludes string powerpc-utils
+
+d-i debian-installer/include string debian-ports-archive-keyring
+d-i debian-installer/exclude string powerpc-utils
