@@ -16,14 +16,14 @@ usage() {
 	echo "                     {${known_distros}}". >&2
 	echo "                     Default: '${install_distro}'." >&2
 	echo "  --install-dir    - Installation directory. Default: '${install_dir}'." >&2
-	echo "  --keep-tmp       - Keep temp files." >&2
+	echo "  --clean-tmp      - Remove temp files." >&2
 	eval "${old_xtrace}"
 }
 
 process_opts() {
 	local short_opts="hvk"
 	local long_opts="help,verbose,\
-arch:,hostfwd:,p9-share:,install-distro:,install-dir:,keep-tmp"
+arch:,hostfwd:,p9-share:,install-distro:,install-dir:,clean-tmp"
 
 	local opts
 	opts=$(getopt --options ${short_opts} --long ${long_opts} -n "${script_name}" -- "$@")
@@ -62,8 +62,8 @@ arch:,hostfwd:,p9-share:,install-distro:,install-dir:,keep-tmp"
 			install_dir="${2}"
 			shift 2
 			;;
-		--keep-tmp)
-			keep_tmp=1
+		--clean-tmp)
+			clean_tmp=1
 			shift
 			;;
 		--)
@@ -86,10 +86,10 @@ on_exit() {
 	fi
 
 	if [[ -d "${tmp_dir}" ]]; then
-		if [[ ${keep_tmp} ]]; then
-			echo "${script_name}: INFO: tmp directory: '${tmp_dir}'" >&2
-		else
+		if [[ ${clean_tmp} ]]; then
 			rm -rf "${tmp_dir}"
+		else
+			echo "${script_name}: INFO: tmp directory: '${tmp_dir}'" >&2
 		fi
 	fi
 
@@ -102,7 +102,7 @@ get_arch() {
 	case "${a}" in
 	arm64|aarch64)			echo "arm64" ;;
 	amd64|x86_64)			echo "amd64" ;;
-	ppc|powerpc|ppc32|powerpc32)	echo "ppc32" ;;
+	ppc|powerpc|ppc32|powerpc32)	echo "powerpc" ;;
 	ppc64|powerpc64)		echo "ppc64" ;;
 	ppc64le|powerpc64le)		echo "ppc64le" ;;
 	*)
@@ -136,28 +136,34 @@ check_directory() {
 	fi
 }
 
-check_file_sum() {
+check_file_md5sum() {
 	local file=${1}
-	local check_sum=${2}
+	local sum=${2}
 
 	local file_sum
 	file_sum=$(md5sum "${file}" | cut -f 1 -d ' ')
 
-	echo "${file}: file sum: ${file_sum}"
-	echo "${file}: check sum: ${check_sum}"
+	echo "${file}:"
+	echo "  file sum:  ${file_sum}"
+	echo "  check sum: ${sum}"
 	
-	if [[ "${file_sum}" != "${check_sum}" ]]; then
-		echo "${script_name}: ERROR: Bad sum: '${file}'" >&2
+	if [[ "${file_sum}" != "${sum}" ]]; then
+		echo "${script_name}: ERROR: Bad md5sum: '${file}'" >&2
 		exit 1
 	fi
 }
 
 check_installer_image_sum() {
-	local info="${1}"
+	local info_file="${1}"
 	local image_gz="${2}"
 
-	echo "${script_name}: TODO: ${FUNCNAME[0]}" >&2
-	exit 1
+	# 18cde179c3be2916d70e57d1354fbd4b 130949912 debian-installer-images_20200314_powerpc.tar.gz
+
+	local sum
+	sum="$(grep -E "^ [[:xdigit:]]{32} [[:digit:]]* ${image_gz##*/}$" "${info_file}" | cut -d ' ' -f 2)"
+	#echo "@${sum}@"
+
+	check_file_md5sum "${image_gz}" "${sum}"
 }
 
 extract_initrd() {
@@ -209,7 +215,6 @@ setup_disk_images() {
 	local disk_image=${2}
 	local preseed_file=${3}
 
-	mkdir -p "${install_dir}"
 	qemu-img create -f qcow2 "${disk_image}" 80G
 
 	if [[ ! -f "${preseed_file}" ]]; then
@@ -218,6 +223,16 @@ setup_disk_images() {
 		check_file "${preseed_file}"
 		cp -av "${preseed_file}" "${install_dir}/"
 		initrd_add_preseed "${tmp_dir}/initrd.gz" "${preseed_file}"
+	fi
+}
+
+check_target_arch() {
+	local target_arch=${1}
+
+	if [[ "${known_arches}" != *"${target_arch}"* ]]; then
+		echo "${script_name}: ERROR: Unsupported target arch: '${target_arch}'." >&2
+		usage
+		exit 1
 	fi
 }
 
@@ -253,6 +268,11 @@ set_qemu_args() {
 		#qemu_args+=" -machine pseries,cap-htm=off -m 2048"
 		qemu_args+=" -machine pseries,cap-htm=off -m 2048 -append 'root=/dev/ram0 console=hvc0'"
 		;;
+	amd64--powerpc)
+		unset have_efi
+		qemu_exe="qemu-system-ppc"
+		qemu_args+=" -M mac99,via=pmu -L pc-bios -m 1024 -net nic,model=sungem -net user"
+		;;
 	*)
 		echo "${script_name}: ERROR: Unsupported host--target combo: '${host_arch}--${target_arch}'." >&2
 		exit 1
@@ -284,10 +304,10 @@ arm64_installer_download() {
 	local check_sum
 
 	check_sum=$(grep -E "/${remote_dir}/initrd.gz" "${tmp_dir}/MD5SUMS" | cut -f 1 -d ' ')
-	check_file_sum "${tmp_dir}/initrd.gz" "${check_sum}"
+	check_file_md5sum "${tmp_dir}/initrd.gz" "${check_sum}"
 
 	check_sum=$(grep -E "/${remote_dir}/linux" "${tmp_dir}/MD5SUMS" | cut -f 1 -d ' ')
-	check_file_sum "${tmp_dir}/linux" "${check_sum}"
+	check_file_md5sum "${tmp_dir}/linux" "${check_sum}"
 }
 
 arm64_debian_download() {
@@ -346,9 +366,10 @@ arm64_run_qemu() {
 		${append:+-append ${append}}
 }
 
-arm64_run_installer() {
-	local distro=${1}
-	local release=${2}
+arm64_installer_run() {
+	local install_dir=${1}
+	local distro=${2}
+	local release=${3}
 
 	distro_triple="${target_arch}-${install_distro}"
 
@@ -365,10 +386,7 @@ arm64_run_installer() {
 
 	${target_arch}_${distro}_download "${tmp_dir}" "${release}"
 
-	local install_dir="${install_dir:-/tmp/${script_name}-${distro_triple}-${build_time}}"
-	mkdir -p "${install_dir}"
-
-	disk_image="${disk_image:-"${install_dir}/hda.qcow2"}"
+	disk_image="${disk_image:-"${install_dir}/${distro_triple}.qcow2"}"
 	local preseed_file=${preseed_file:-"${SCRIPTS_TOP}/${distro_triple}-qemu.preseed"}
 
 	setup_disk_images "${install_dir}" "${disk_image}" "${preseed_file}"
@@ -402,11 +420,11 @@ arm64_run_installer() {
 }
 
 arm64_start_vm() {
-	local host_name=${1}
+	local install_dir=${1}
+	local host_name=${2}
 
 	disk_image="${disk_image:-"${install_dir}/hda.qcow2"}"
 
-	check_directory "${install_dir}"     " <install-dir>" "usage"
 	check_file "${disk_image}"           " <disk-image>"  "usage"
 	check_file "${install_dir}/efi-code" " efi-code"      "usage"
 	check_file "${install_dir}/efi-vars" " efi-vars"      "usage"
@@ -431,13 +449,18 @@ arm64_start_vm() {
 		"${install_dir}/efi-vars"
 }
 
-ppc64_installer_download() {
+powerpc_installer_download() {
 	local tmp_dir="${1}"
 
-	local version="20200314"
-	local di_tgz="debian-installer-images_${version}_powerpc.tar.gz"
-	local di_info="debian-installer_${version}_powerpc.buildinfo"
 	local di_url="http://ftp.ports.debian.org/debian-ports/pool-powerpc/main/d/debian-installer/"
+	local di_list="${tmp_dir}/list.html"
+
+	curl -s -o "${di_list}" "${di_url}"
+	version="$(egrep --only-matching '>debian-installer_[0-9]*_powerpc.buildinfo</a>' "${di_list}" | cut -d '_' -f 2)"
+	echo "${script_name}: INFO: di version = '${version}'" >&2
+
+	local di_info="debian-installer_${version}_powerpc.buildinfo"
+	local di_tgz="debian-installer-images_${version}_powerpc.tar.gz"
 
 	local no_verbose
 	[[ ${verbose} ]] || no_verbose="--no-verbose"
@@ -452,7 +475,7 @@ ppc64_installer_download() {
 			-O "${tmp_dir}/${di_tgz}" "${di_url}/${di_tgz}"
 	fi
 
-	#check_installer_image_sum "${tmp_dir}/${di_info}" "${tmp_dir}/${di_tgz}"
+	check_installer_image_sum "${tmp_dir}/${di_info}" "${tmp_dir}/${di_tgz}"
 
 	tar -C "${tmp_dir}" -xf "${tmp_dir}/${di_tgz}"
 
@@ -463,9 +486,10 @@ ppc64_installer_download() {
 
 }
 
-ppc64_run_installer() {
-	local distro=${1}
-	local release=${2}
+powerpc_installer_run() {
+	local install_dir=${1}
+	local distro=${2}
+	local release=${3}
 
 	distro_triple="${target_arch}-${install_distro}"
 
@@ -478,10 +502,7 @@ ppc64_run_installer() {
 		;;
 	esac
 
-	ppc64_installer_download "${tmp_dir}"
-
-	local install_dir="${install_dir:-/tmp/${script_name}-${distro_triple}-${build_time}}"
-	mkdir -p "${install_dir}"
+	powerpc_installer_download "${tmp_dir}"
 
 	disk_image="${disk_image:-"${install_dir}/hda.qcow2"}"
 	local preseed_file=${preseed_file:-"${SCRIPTS_TOP}/${distro_triple}-qemu.preseed"}
@@ -515,13 +536,21 @@ SCRIPTS_TOP=${SCRIPTS_TOP:-"$(cd "${BASH_SOURCE%/*}" && pwd)"}
 
 process_opts "${@}"
 
-known_arches="arm64 ppc64"
+known_arches="arm64 powerpc"
 known_distros="debian-sid debian-buster ubuntu-eoan ubuntu-bionic-updates"
 
 host_arch=$(get_arch "$(uname -m)")
+target_arch=${target_arch:-${host_arch}}
+
+install_distro=${install_distro:-"debian-buster"}
+distro_triple="${target_arch}-${install_distro}"
+
 hostname=${hostname:-"tester-${target_arch}"}
 hostfwd=${hostfwd:-"20022"}
-install_distro=${install_distro:-"debian-buster"}
+
+install_dir="${install_dir:-$(pwd)/${script_name%.sh}--${distro_triple}-${build_time}}"
+install_dir="$(realpath "${install_dir}")"
+tmp_dir="${install_dir}/${distro_triple}-${build_time}.tmp"
 
 sudo="sudo -S"
 
@@ -537,6 +566,8 @@ if [[ ! ${target_arch} ]]; then
 	exit 1
 fi
 
+check_target_arch "${target_arch}"
+
 set_qemu_args
 
 if ! test -x "$(command -v ${qemu_exe})"; then
@@ -544,22 +575,21 @@ if ! test -x "$(command -v ${qemu_exe})"; then
 	exit 1
 fi
 
-distro_triple="${target_arch}-${install_distro}"
-
 if [[ ${install_distro} ]]; then
 	distro="${install_distro%%-*}"
 	release="${install_distro#*-}"
 
-	tmp_dir="$(mktemp --tmpdir --directory \
-		"${script_name%.sh}--${distro_triple}.XXXX")"
+	mkdir -p "${tmp_dir}"
 
-	${target_arch}_run_installer "${distro}" "${release}"
+	${target_arch}_installer_run "${install_dir}" "${distro}" "${release}"
 
 	trap "on_exit 'Success'" EXIT
 	exit 0
 fi
 
-${target_arch}_start_vm "${hostname}"
+check_directory "${install_dir}" " <install-dir>" "usage"
+
+${target_arch}_start_vm "${install_dir}" "${hostname}"
 
 trap "on_exit 'Success'" EXIT
 exit 0
