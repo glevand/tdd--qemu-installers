@@ -16,14 +16,27 @@ usage() {
 	echo "                     {${known_distros}}". >&2
 	echo "                     Default: '${install_distro}'." >&2
 	echo "  --install-dir    - Installation directory. Default: '${install_dir}'." >&2
+	echo "  --cache-dir      - Download file cache. Default: '${cache_dir}'." >&2
 	echo "  --clean-tmp      - Remove temp files." >&2
+	
+	echo "Info:" >&2
+	if [[ -d  "${cache_dir}" ]]; then
+		if compgen -G "${cache_dir}/debian-installer_*_powerpc.buildinfo" > /dev/null; then
+			echo "File cache '${cache_dir}' found." >&2
+		else
+			echo "File cache '${cache_dir}' empty." >&2
+			exit 1
+		fi
+	else
+		echo "File cache '${cache_dir}' not found." >&2
+	fi
 	eval "${old_xtrace}"
 }
 
 process_opts() {
 	local short_opts="hvk"
 	local long_opts="help,verbose,\
-arch:,hostfwd:,p9-share:,install-distro:,install-dir:,clean-tmp"
+arch:,hostfwd:,p9-share:,install-distro:,install-dir:,cache-dir:,clean-tmp"
 
 	local opts
 	opts=$(getopt --options ${short_opts} --long ${long_opts} -n "${script_name}" -- "$@")
@@ -60,6 +73,10 @@ arch:,hostfwd:,p9-share:,install-distro:,install-dir:,clean-tmp"
 			;;
 		--install-dir)
 			install_dir="${2}"
+			shift 2
+			;;
+		--cache-dir)
+			cache_dir="${2}"
 			shift 2
 			;;
 		--clean-tmp)
@@ -290,8 +307,8 @@ arm64_installer_download() {
 	[[ ${verbose} ]] || no_verbose="--no-verbose"
 
 	# For debugging.
-	if [[ -d "/tmp/${distro_triple}-file-cache" ]]; then
-		cp -av "/tmp/${distro_triple}-file-cache/"* "${tmp_dir}/"
+	if [[ -d "${cache_dir}" ]]; then
+		cp -av "${cache_dir}/"* "${tmp_dir}/"
 	else
 		wget ${no_verbose} \
 			-O "${tmp_dir}/MD5SUMS" "${sums_url}/MD5SUMS"
@@ -466,8 +483,8 @@ powerpc_installer_download() {
 	[[ ${verbose} ]] || no_verbose="--no-verbose"
 
 	# For debugging.
-	if [[ -d "/tmp/${distro_triple}-file-cache" ]]; then
-		cp -av "/tmp/${distro_triple}-file-cache/"* "${tmp_dir}/"
+	if [[ -d "${cache_dir}" ]]; then
+		cp -av "${cache_dir}/"* "${tmp_dir}/"
 	else
 		wget ${no_verbose} \
 			-O "${tmp_dir}/${di_info}" "${di_url}/${di_info}"
@@ -509,6 +526,8 @@ powerpc_installer_run() {
 
 	setup_disk_images "${install_dir}" "${disk_image}" "${preseed_file}"
 
+#echo "${script_name}: INFO: initrd ready: '"${tmp_dir}/initrd.gz"'" >&2
+#return
 	qemu-system-ppc \
 		-M mac99,via=pmu \
 		-L pc-bios \
@@ -525,32 +544,33 @@ powerpc_installer_run() {
 }
 
 #===============================================================================
-export PS4='\[\033[0;33m\]+ ${BASH_SOURCE##*/}:${LINENO}:(${FUNCNAME[0]:-"?"}): \[\033[0;37m\]'
+export PS4='\[\e[0;33m\]+ ${BASH_SOURCE##*/}:${LINENO}:(${FUNCNAME[0]:-"?"}):\[\e[0m\] '
 script_name="${0##*/}"
 build_time="$(date +%Y.%m.%d-%H.%M.%S)"
 
 trap "on_exit 'Failed'" EXIT
 set -e
 
-SCRIPTS_TOP=${SCRIPTS_TOP:-"$(cd "${BASH_SOURCE%/*}" && pwd)"}
+SCRIPTS_TOP="${SCRIPTS_TOP:-$(cd "${BASH_SOURCE%/*}" && pwd)}"
 
 process_opts "${@}"
 
 known_arches="arm64 powerpc"
 known_distros="debian-sid debian-buster ubuntu-eoan ubuntu-bionic-updates"
 
-host_arch=$(get_arch "$(uname -m)")
-target_arch=${target_arch:-${host_arch}}
+host_arch="$(get_arch "$(uname -m)")"
+target_arch="${target_arch:-${host_arch}}"
 
-install_distro=${install_distro:-"debian-buster"}
+install_distro="${install_distro:-debian-buster}"
 distro_triple="${target_arch}-${install_distro}"
+cache_dir="${cache_dir:-/tmp/${distro_triple}-file-cache}"
 
-hostname=${hostname:-"tester-${target_arch}"}
-hostfwd=${hostfwd:-"20022"}
+hostname="${hostname:-tester-${target_arch}}"
+hostfwd="${hostfwd:-20022}"
 
 install_dir="${install_dir:-$(pwd)/${script_name%.sh}--${distro_triple}-${build_time}}"
 install_dir="$(realpath "${install_dir}")"
-tmp_dir="${install_dir}/${distro_triple}-${build_time}.tmp"
+tmp_dir="${install_dir}/${distro_triple}-tmp-${build_time}"
 
 sudo="sudo -S"
 

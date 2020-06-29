@@ -12,6 +12,7 @@ d-i debian-installer/locale string en_US
 
 # Keyboard selection.
 d-i console-keymaps-at/keymap select us
+d-i keyboard-configuration/xkb-keymap us
 
 ### Network configuration
 d-i netcfg/choose_interface select auto
@@ -47,8 +48,6 @@ d-i partman/confirm_nooverwrite boolean true
 ### Clock and time zone setup
 d-i clock-setup/utc boolean true
 d-i time/zone string US/Pacific
-
-d-i keyboard-configuration/xkb-keymap us
 
 ### Apt setup
 d-i apt-setup/non-free boolean true

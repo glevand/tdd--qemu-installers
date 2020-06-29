@@ -5,23 +5,60 @@
 #
 # /var/log/installer/cdebconf/questions.dat
 #
+# https://www.debian.org/releases/buster/example-preseed.txt
+#
 
+### Localization
+d-i debian-installer/locale string en_US
 
+# Keyboard selection.
+d-i console-keymaps-at/keymap select us
+d-i keyboard-configuration/xkb-keymap us
+
+### Network configuration
+d-i netcfg/choose_interface select auto
+
+d-i netcfg/get_hostname string powerpc-debian
+d-i netcfg/get_domain string local
+
+# Disable that annoying WEP key dialog.
+d-i netcfg/wireless_wep string
+
+### Network console
+d-i anna/choose_modules string network-console
+d-i preseed/early_command string anna-install network-console
+d-i network-console/password password nc
+d-i network-console/password-again password nc
+
+### Mirror settings
 d-i mirror/country string enter information manually
 d-i mirror/http/hostname string http://ftp.ports.debian.org
 d-i mirror/http/directory string /debian-ports/
 d-i mirror/http/proxy string
 
-#d-i base-installer/excludes string powerpc-ibm-utils powerpc-utils
+# Root password, either in clear text
+d-i passwd/root-password password r
+d-i passwd/root-password-again password r
 
+# To create a normal user account.
+d-i passwd/user-fullname string
+d-i passwd/username string geoff
+d-i passwd/user-password password g
+d-i passwd/user-password-again password g
+d-i passwd/user-uid string 1000
+
+### Clock and time zone setup
+d-i clock-setup/utc boolean true
+d-i time/zone string US/Pacific
+d-i clock-setup/ntp boolean true
+
+### Partitioning
+
+### Base system installation
+d-i base-installer/kernel/image string
+
+#d-i base-installer/include string debian-ports-archive-keyring
+#d-i base-installer/exclude string powerpc-utils
 d-i base-installer/includes string debian-ports-archive-keyring
 d-i base-installer/excludes string powerpc-utils
 
-d-i base-installer/include string debian-ports-archive-keyring
-d-i base-installer/exclude string powerpc-utils
-
-d-i debian-installer/includes string debian-ports-archive-keyring
-d-i debian-installer/excludes string powerpc-utils
-
-d-i debian-installer/include string debian-ports-archive-keyring
-d-i debian-installer/exclude string powerpc-utils
